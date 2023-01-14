@@ -26,7 +26,8 @@ module.exports = {
   //     : 'nosources-source-map',
   output: {
     clean: true,
-    publicPath: '/',
+    // publicPath: '/data/',
+    publicPath: '',
     filename: 'js/[name].[contenthash].js'
   },
   devServer: {
