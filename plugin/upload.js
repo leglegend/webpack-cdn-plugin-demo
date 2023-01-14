@@ -10,8 +10,6 @@ var options = {
 var putPolicy = new qiniu.rs.PutPolicy(options)
 var uploadToken = putPolicy.uploadToken(mac)
 
-console.log(uploadToken)
-
 var config = new qiniu.conf.Config()
 // 空间对应的机房
 config.zone = qiniu.zone.Zone_z1
@@ -19,12 +17,14 @@ config.zone = qiniu.zone.Zone_z1
 var baseUrl = 'http://rogy0w6f6.hb-bkt.clouddn.com/'
 
 var formUploader = new qiniu.form_up.FormUploader(config)
-var putExtra = new qiniu.form_up.PutExtra({
-  mimeType: 'js'
-})
 
 module.exports = {
   uploadFile(key, file) {
+    var putExtra = new qiniu.form_up.PutExtra({
+      // 通过文件名后缀判断文件格式
+      mimeType: key.substring(key.lastIndexOf('.') + 1)
+    })
+
     return new Promise((resolve, reject) => {
       formUploader.put(
         uploadToken,

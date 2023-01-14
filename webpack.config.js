@@ -2,19 +2,30 @@ const path = require('path')
 const { VueLoaderPlugin } = require('vue-loader')
 const HtmlWebpackPlugin = require('html-webpack-plugin')
 const HelloWorldPlugin = require('./plugin/plugin')
+const MiniCssExtractPlugin = require('mini-css-extract-plugin')
 
 function resolve(dir) {
   return path.join(__dirname, dir)
 }
 
 const plugins = [
-  new HelloWorldPlugin(),
   new VueLoaderPlugin(),
   new HtmlWebpackPlugin({
     title: 'webpack5-cdn-plugin',
     template: './public/index.html'
   })
 ]
+
+if (process.env.NODE_ENV === 'production') {
+  plugins.push(
+    new MiniCssExtractPlugin({
+      filename: 'css/[name].[contenthash].css',
+      chunkFilename: 'css/[name].[contenthash].css',
+      ignoreOrder: true
+    }),
+    new HelloWorldPlugin()
+  )
+}
 
 module.exports = {
   entry: './src/main.ts',
@@ -26,8 +37,7 @@ module.exports = {
   //     : 'nosources-source-map',
   output: {
     clean: true,
-    // publicPath: '/data/',
-    publicPath: '',
+    publicPath: process.env.NODE_ENV === 'development' ? '/data/' : '',
     filename: 'js/[name].[contenthash].js'
   },
   devServer: {
@@ -51,7 +61,9 @@ module.exports = {
       {
         test: /\.(sa|sc|c)ss$/,
         use: [
-          // 'style-loader',
+          process.env.NODE_ENV === 'production'
+            ? MiniCssExtractPlugin.loader
+            : 'style-loader',
           'css-loader',
           {
             loader: 'postcss-loader',
