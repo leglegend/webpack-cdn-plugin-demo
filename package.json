@@ -20,6 +20,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@q/qcdn": "^3.1.7",
     "axios": "^0.27.2",
     "default-passive-events": "^2.0.0",
     "element-plus": "^2.2.12",

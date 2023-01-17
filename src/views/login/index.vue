@@ -11,7 +11,7 @@
 <style lang="scss" scoped>
 .app-login {
   padding: 0;
-  background-color: red;
+  background-color: blue;
 }
 </style>
 

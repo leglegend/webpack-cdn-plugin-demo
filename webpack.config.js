@@ -96,7 +96,7 @@ module.exports = {
         exclude: [resolve('src/icons')],
         type: 'asset',
         generator: {
-          filename: 'images/[name].[hash][ext]'
+          filename: 'img/[name].[hash][ext]'
         }
       }
     ]
