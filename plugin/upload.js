@@ -4,10 +4,10 @@ var accessKey = 'fltIkWyvX3JvWfWamktT4j244TjSXrgJrI-vRUrJ'
 var secretKey = 'HSf5WPX95T_UslLsxOAHezQua4Sg57R6bNHsnHIj'
 var mac = new qiniu.auth.digest.Mac(accessKey, secretKey)
 
-var options = {
+
+var putPolicy = new qiniu.rs.PutPolicy({
   scope: 'nite'
-}
-var putPolicy = new qiniu.rs.PutPolicy(options)
+})
 var uploadToken = putPolicy.uploadToken(mac)
 
 var config = new qiniu.conf.Config()

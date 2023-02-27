@@ -1,151 +1,250 @@
-const { uploadFile } = require('./qupload')
+/* eslint-disable */
+const { initOption, uploadFile } = require('./qupload')
 const path = require('path')
 const fs = require('fs')
 
 function resolve(dir) {
-  return path.resolve(process.cwd(), 'dist', dir)
+  return path.resolve(process.cwd(), dir)
 }
 
-// 返回文件的资源内容
-function findStringValue(asset) {
-  if (asset._cachedSource) return asset._cachedSource
+// 修改字符串
+function replaceGroupToAlone(assetStringValue, chunkIds, prefix, ext) {
+  const regExp = new RegExp(`e=>"${prefix.slice(0, -1)}\\/".+"\\.${ext}"`)
+  const regExp2 = new RegExp(
+    `function\\(e\\){return"${prefix.slice(0, -1)}\\/".+"\\.${ext}"}`
+  )
+  const aimString =
+    assetStringValue.match(regExp)?.[0] ||
+    assetStringValue.match(regExp2)?.[0] ||
+    ''
 
-  const source = asset._source || asset
+  if (!aimString) return assetStringValue
 
-  if (source._valueIsBuffer) {
-    return source._valueAsBuffer
+  const fileList = []
+
+  let getFile
+
+  eval('getFile=' + aimString)
+
+  chunkIds.forEach((id) => {
+    if (
+      !getFile(id).includes('undefined') &&
+      !fileList.includes(`${id}:"${getFile(id)}"`)
+    ) {
+      fileList.push(`${id}:"${getFile(id)}"`)
+    }
+  })
+
+  return assetStringValue.replace(aimString, `e=>""+{${fileList.join(',')}}[e]`)
+}
+
+// 将js文件中引用方式改为引用完整路径
+function changeFileResolvePath(assetStringValue, chunkIds, fileList) {
+  // 获取所有文件前缀，去重
+  const filePrefixs = new Array(...new Set(fileList.map((file) => file.prefix)))
+
+  if (filePrefixs.length) {
+    for (let prefix of filePrefixs) {
+      if (!prefix) continue
+      assetStringValue = replaceGroupToAlone(
+        assetStringValue,
+        chunkIds,
+        prefix,
+        'js'
+      )
+      assetStringValue = replaceGroupToAlone(
+        assetStringValue,
+        chunkIds,
+        prefix,
+        'css'
+      )
+    }
   }
-
-  return asset._valueAsString || asset._source?._valueAsString
+  return assetStringValue
 }
 
-class HelloWorldPlugin {
-  options
+// 去掉js文件中的公共路径
+function removePublicPath(publicPath, assetStringValue) {
+  if (!publicPath) return assetStringValue
+  return assetStringValue.replace(`.p="${publicPath}"`, '.p=""')
+}
 
+// 判断是文件还是文件夹
+function isFile(dir) {
+  return fs.lstatSync(dir).isFile()
+}
+
+// 递归查找输出目录的所有文件
+function deepReaddir(dir, prefix) {
+  return fs.readdirSync(dir).flatMap((fileName) => {
+    const completePath = path.join(dir, fileName)
+
+    if (isFile(completePath)) {
+      if (/\.(txt|map)$/.test(fileName)) return []
+      return {
+        fileName: fileName,
+        prefix,
+        fullPath: completePath
+      }
+    } else return deepReaddir(completePath, prefix + fileName + '/')
+  })
+}
+
+/**
+ * 不用正则的方式替换所有值
+ * @param text 被替换的字符串
+ * @param checker  替换前的内容
+ * @param replacer 替换后的内容
+ * @returns {String} 替换后的字符串
+ */
+function replaceAll(text, checker, replacer) {
+  let lastText = text
+  text = text.replace(checker, replacer)
+  if (lastText !== text) {
+    return replaceAll(text, checker, replacer)
+  }
+  return text
+}
+
+class Webpack5UploadPlugin {
   constructor(options) {
-    this.options = options
+    initOption(options)
   }
 
   apply(compiler) {
+    let publicPath = compiler.options.output.publicPath || '/'
+    // 如果公共路径不是以’/‘结尾，则在后面加上’/‘
+    if (!/\/$/.test(publicPath)) publicPath += '/'
+
+    // 文件输出路径
+    const outputDir = compiler.options.output.path || resolve('dist')
+
+    // 保存已上传文件的路径
+    const uploadedFiles = []
+
+    // 块id
+    let chunkIds = []
+
+    compiler.hooks.compilation.tap('Webpack5UploadPlugin', (compilation) => {
+      compilation.hooks.chunkAsset.tap('Webpack5UploadPlugin', (chunk) => {
+        chunkIds.push(chunk.id)
+      })
+    })
+
     compiler.hooks.afterEmit.tapPromise(
-      'Webpack5CDNPlugin',
+      'Webpack5UploadPlugin',
       async (compilation) => {
-        // 资源列表
-        const _assets = compilation.assets
+        // 计算文件列表
+        const fileList = deepReaddir(outputDir, '')
 
-        console.log(_assets)
-
-        // 资源列表的key值，就是每一个文件的文件名
-        let list = []
-        for (let key in _assets) list.push(key)
-
-        // 只处理js css html 文件
-        list = list.filter((key) => /\.(js|html|css|png)$/.test(key))
-        console.log(list)
-
-        // 找到入口文件，只考虑index.html的情况
-        if (!_assets['index.html']) return
+        // 找到入口文件
+        const enters = fileList.filter((file) => /\.html$/.test(file.fileName))
 
         // 保存已上传CDN文件的路径，防止同一个文件多次上传
         const already = new Map()
 
-        await dfs('index.html', '|')
-
         // 深度查询该文件引用了哪些文件
-        async function dfs(key, log, map = new Map()) {
-          // 拦截循环引用元素，直接返回元素的相对路径
-          // TODO 此处需要做公共路径的处理
-          if (map.get(key) === 2) return key
-
-          // 一个哈希表，存储当前分支所有元素的信息
-          // value代表该元素是否出现循环引用
-          // 1:正常 2:存在循环引用
-          map.set(key, 1)
-          console.log(log + key)
-
-          // 文件的路径
-          const path = resolve(key)
-          console.log(path)
-
+        async function dfs(current) {
           // 只有html js css需要替换内容
-          if (/\.(js|css|html)$/.test(key)) {
+          if (/\.(js|html|css)$/.test(current.fileName)) {
             // 文件资源的字符串
-            // let assetStringValue = findStringValue(_assets[key])
-            let assetStringValue = fs.readFileSync(path, 'utf8')
+            let assetStringValue = fs.readFileSync(current.fullPath, 'utf8')
 
             // 是否需要重写内容，如果文件引用了其他文件，则需要修改文件内的引用地址
             let needReplace = false
 
-            for (let fileName of list) {
+            // js文件有特殊匹配规则
+            if (/\.js$/.test(current.fileName)) {
+              needReplace = true
+
+              // js文件需要去掉公共路径，不然引用会有问题
+              assetStringValue = removePublicPath(publicPath, assetStringValue)
+
+              // 将js文件中分段式的路径拼接改为完整路径
+              assetStringValue = changeFileResolvePath(
+                assetStringValue,
+                chunkIds,
+                fileList
+              )
+            }
+
+            for (let file of fileList) {
+              // 过滤当前文件
+              if (current.fileName === file.fileName) continue
+
               // 当文件内容包含其他文件名称时
-              if (assetStringValue?.includes(fileName) && key !== fileName) {
+              if (assetStringValue?.includes(file.fileName)) {
                 // 文件内容中包含别的文件，所以之后需要重写文件内容
                 needReplace = true
 
-                // 哈希表中存在该文件的引用，证明出现循环引用
-                // TODO 这里需要做公共路径的适配
-                if (map.get(fileName)) map.set(fileName, 2)
-
                 // 通过深度遍历查询被引用的文件是否还引用了其他文件
-                // 这里需要一个Map解决循环引用的问题
-                // 把已访问的文件放进Map中，在自身的深度遍历中如果再遇到
-                // 则证明包含循环引用
-                const newPath =
-                  already.get(fileName) || (await dfs(fileName, log + '-', map))
+                const newPath = already.get(file.fileName) || (await dfs(file))
 
-                // 将文件内容中对其他文件的引用替换为上传CDN之后的地址
-                assetStringValue = assetStringValue.replaceAll(
-                  fileName,
-                  newPath
-                )
+                // html和css中的引用使用publickPath+文件路径的方式
+                if (/\.(html|css)$/.test(current.fileName)) {
+                  assetStringValue = replaceAll(
+                    assetStringValue,
+                    publicPath + file.prefix + file.fileName,
+                    newPath
+                  )
+                }
+
+                if (/\.js$/.test(current.fileName)) {
+                  assetStringValue = replaceAll(
+                    assetStringValue,
+                    file.prefix + file.fileName,
+                    newPath
+                  )
+                }
+
+                if (/\.css$/.test(current.fileName)) {
+                  assetStringValue = replaceAll(
+                    assetStringValue,
+                    '../' + file.fileName,
+                    newPath
+                  )
+                }
               }
             }
 
             // 将文件资源替换成修改后的
             if (needReplace) {
-              fs.writeFileSync(path, assetStringValue)
-              // _assets[key] = {
-              //   source() {
-              //     return assetStringValue
-              //   },
-              //   size() {
-              //     return assetStringValue.length
-              //   }
-              // }
+              fs.writeFileSync(current.fullPath, assetStringValue)
             }
           }
 
-          let newKey
+          // html不用上传 直接返回
+          if (/\.html$/.test(current.fileName)) return current.fileName
 
-          // 出现循环引用，这里对出现循环引用的元素做特殊处理
-          if (map.get(key) === 2 || key === 'index.html') {
-            // 由于当前元素出现循环引用，并且我们已将其后代元素上传CDN
-            // 所以这里还采用源地址，这样即使后代元素保存的是相对路径
-            // 也能够访问到
-            // TODO 这里需要做公共路径的适配
-            newKey = key
-          } else {
-            // 在这里进行上传操作，并获取到上传后的新路径
-            // newKey = await uploadFile(key, assetStringValue)
-            newKey = await uploadFile(key, path)
-          }
+          // 在这里进行上传操作，并获取到上传后的新路径
+          const newPath = await uploadFile(current.fullPath)
+
+          // 上传完成后保存源文件路径，打包结束后删除
+          uploadedFiles.push(current.fullPath)
 
           // 并将新路径放进Map中
-          already.set(key, newKey)
-
-          // 当前元素已处理完成，从哈希表中删除
-          map.delete(key)
-
-          console.log('将' + key + '替换为' + newKey)
+          already.set(current.fileName, newPath)
 
           // 返回修改后的资源名称
-          return newKey
+          return newPath
+        }
+
+        for (const file of enters) {
+          await dfs(file)
         }
 
         return Promise.resolve()
       }
     )
+    compiler.hooks.done.tap('Webpack5UploadPlugin', () => {
+      // 完成后删除已上传的文件
+      // 因为打包后webpack会把文件信息列出来，直接删除会报错
+      // 这里给一个延迟，等他列完再删
+      setTimeout(() => {
+        uploadedFiles.forEach((path) => fs.unlinkSync(path))
+      }, 500)
+    })
   }
 }
 
-module.exports = HelloWorldPlugin
+module.exports = Webpack5UploadPlugin

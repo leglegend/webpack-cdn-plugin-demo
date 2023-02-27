@@ -22,8 +22,8 @@ if (process.env.NODE_ENV === 'production') {
       filename: 'css/[name].[contenthash].css',
       chunkFilename: 'css/[name].[contenthash].css',
       ignoreOrder: true
-    }),
-    new HelloWorldPlugin()
+    })
+    // new HelloWorldPlugin()
   )
 }
 
@@ -37,7 +37,7 @@ module.exports = {
   //     : 'nosources-source-map',
   output: {
     clean: true,
-    publicPath: process.env.NODE_ENV === 'development' ? '/data/' : '',
+    publicPath: '/data/',
     filename: 'js/[name].[contenthash].js'
   },
   devServer: {

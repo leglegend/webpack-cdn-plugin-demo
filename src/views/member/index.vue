@@ -6,6 +6,7 @@
 <script setup lang="ts" name="Home">
 </script>
 <style lang="scss" scoped>
+@import '@/style/index.scss';
   .member-home {
     height: 100px;
   }
